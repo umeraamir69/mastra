@@ -239,6 +239,17 @@ describe('ModalSandbox lifecycle', () => {
       expect.objectContaining({ timeoutMs: 120_000 }),
     );
   });
+
+  it('passes idleTimeoutMs to sandboxes.create()', async () => {
+    const sandbox = new ModalSandbox({ timeoutMs: 600_000, idleTimeoutMs: 60_000 });
+    await sandbox._start();
+
+    expect(mockSandboxes.create).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ timeoutMs: 600_000, idleTimeoutMs: 60_000 }),
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -718,12 +729,26 @@ describe('ModalSandbox.clone', () => {
     });
   });
 
-  it('maps idleTimeoutMinutes to timeoutMs', () => {
+  it('maps idleTimeoutMinutes to idleTimeoutMs and raises timeoutMs when needed', () => {
     const template = new ModalSandbox({ tokenId: 'tid', tokenSecret: 'tsec', timeoutMs: 120_000 });
 
     const child = template.clone({ idleTimeoutMinutes: 15 });
 
-    expect(child['_constructorOptions']).toMatchObject({ timeoutMs: 900_000 });
+    expect(child['_constructorOptions']).toMatchObject({
+      idleTimeoutMs: 900_000,
+      timeoutMs: 900_000,
+    });
+  });
+
+  it('keeps a longer inherited timeoutMs when idleTimeoutMinutes is shorter', () => {
+    const template = new ModalSandbox({ tokenId: 'tid', tokenSecret: 'tsec', timeoutMs: 600_000 });
+
+    const child = template.clone({ idleTimeoutMinutes: 5 });
+
+    expect(child['_constructorOptions']).toMatchObject({
+      idleTimeoutMs: 300_000,
+      timeoutMs: 600_000,
+    });
   });
 
   it('applies workingDirectory override', () => {

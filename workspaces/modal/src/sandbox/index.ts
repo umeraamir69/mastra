@@ -41,6 +41,12 @@ export interface ModalSandboxOptions extends Omit<MastraSandboxOptions, 'process
    * @default 300_000 // 5 minutes
    */
   timeoutMs?: number;
+  /**
+   * Idle timeout in milliseconds. Modal terminates the sandbox after this much
+   * inactivity. Distinct from `timeoutMs`, which is the hard upper lifetime.
+   * Must be a positive multiple of 1000 ms (Modal requirement).
+   */
+  idleTimeoutMs?: number;
   /** Environment variables baked into the sandbox at create time. */
   env?: Record<string, string>;
   /** Default working directory inside the sandbox.
@@ -108,6 +114,7 @@ export class ModalSandbox extends MastraSandbox {
   private readonly appName: string;
   private readonly baseImage: string;
   private readonly timeoutMs: number;
+  private readonly idleTimeoutMs?: number;
   private readonly env: Record<string, string>;
   private readonly tokenId?: string;
   private readonly tokenSecret?: string;
@@ -126,6 +133,7 @@ export class ModalSandbox extends MastraSandbox {
     this.appName = options.appName ?? 'mastra';
     this.baseImage = options.baseImage ?? 'ubuntu:22.04';
     this.timeoutMs = options.timeoutMs ?? 300_000;
+    this.idleTimeoutMs = options.idleTimeoutMs;
     this.env = options.env ?? {};
     if (options.workingDirectory === undefined && options.workdir !== undefined) {
       this.setWorkingDirectory(options.workdir);
@@ -148,18 +156,31 @@ export class ModalSandbox extends MastraSandbox {
    * Use it when one configured sandbox acts as the template for a fleet of
    * independent sandboxes (e.g. one per project).
    *
-   * `options.idleTimeoutMinutes` maps to Modal's `timeoutMs` (wall-clock
-   * lifetime); `options.sandboxId` is ignored because Modal reconnects by
-   * logical `id`.
+   * `options.idleTimeoutMinutes` maps to Modal's `idleTimeoutMs` (idle
+   * teardown). When that idle window is longer than the inherited
+   * `timeoutMs`, the hard lifetime is raised to match so idle shutdown is
+   * not silently defeated. `options.sandboxId` is ignored because Modal
+   * reconnects by logical `id`.
    */
   clone(options: SandboxCloneOptions = {}): ModalSandbox {
     const { id: _id, ...base } = this._constructorOptions;
+    const idleTimeoutMs =
+      options.idleTimeoutMinutes !== undefined
+        ? options.idleTimeoutMinutes * 60_000
+        : undefined;
+    const inheritedTimeoutMs = base.timeoutMs ?? this.timeoutMs;
+    const timeoutMs =
+      idleTimeoutMs !== undefined && idleTimeoutMs > inheritedTimeoutMs
+        ? idleTimeoutMs
+        : base.timeoutMs;
+
     return new ModalSandbox({
       ...base,
       ...(options.id !== undefined && { id: options.id }),
       ...(options.env !== undefined && { env: options.env }),
       ...(options.workingDirectory !== undefined && { workingDirectory: options.workingDirectory }),
-      ...(options.idleTimeoutMinutes !== undefined && { timeoutMs: options.idleTimeoutMinutes * 60_000 }),
+      ...(idleTimeoutMs !== undefined && { idleTimeoutMs }),
+      ...(timeoutMs !== undefined && { timeoutMs }),
     });
   }
 
@@ -205,6 +226,7 @@ export class ModalSandbox extends MastraSandbox {
       this._sb = await client.sandboxes.create(app, this._imageSnapshot, {
         name: this.id,
         timeoutMs: this.timeoutMs,
+        ...(this.idleTimeoutMs !== undefined && { idleTimeoutMs: this.idleTimeoutMs }),
         env: Object.keys(this.env).length > 0 ? this.env : undefined,
         workdir: this.workingDirectory,
         volumes: this.volumes,
@@ -219,6 +241,7 @@ export class ModalSandbox extends MastraSandbox {
     this._sb = await client.sandboxes.create(app, image, {
       name: this.id,
       timeoutMs: this.timeoutMs,
+      ...(this.idleTimeoutMs !== undefined && { idleTimeoutMs: this.idleTimeoutMs }),
       env: Object.keys(this.env).length > 0 ? this.env : undefined,
       workdir: this.workingDirectory,
       volumes: this.volumes,
@@ -306,6 +329,7 @@ export class ModalSandbox extends MastraSandbox {
         appName: this.appName,
         image: this._imageSnapshot?.imageId ?? this.baseImage,
         timeoutMs: this.timeoutMs,
+        ...(this.idleTimeoutMs !== undefined && { idleTimeoutMs: this.idleTimeoutMs }),
       },
     };
   }
